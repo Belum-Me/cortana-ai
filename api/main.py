@@ -1,11 +1,9 @@
-"""
-Servidor FastAPI de Cortana.
-Expone la IA como API REST para que la app del celular se conecte.
-"""
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from pathlib import Path
 from core.memory import init_db, get_recent_history
 from core.llm import chat
 
@@ -17,6 +15,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 init_db()
 
@@ -32,7 +33,7 @@ class MessageResponse(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "Cortana activa", "version": "1.0.0"}
+    return FileResponse(str(STATIC_DIR / "index.html"))
 
 
 @app.post("/chat", response_model=MessageResponse)
