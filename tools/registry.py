@@ -4,6 +4,8 @@ from tools.email_tool import send_email
 from tools.datetime_tool import get_current_datetime
 from tools.calculator import calculate
 from tools.notes import save_note, get_note, list_notes
+from tools.telegram_bot import send_message_sync as telegram_send
+from voice.ambient import transcribe_ambient, get_ambient_level
 
 # Definicion de herramientas para Claude tool-use
 TOOL_DEFINITIONS = [
@@ -92,6 +94,35 @@ TOOL_DEFINITIONS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "send_telegram",
+        "description": "Envia un mensaje al usuario en su celular via Telegram. Usalo para notificaciones proactivas o alertas.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "El mensaje a enviar al celular del usuario"}
+            },
+            "required": ["message"]
+        }
+    },
+    {
+        "name": "listen_environment",
+        "description": "Escucha el entorno por el microfono durante unos segundos y transcribe lo que oye.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "duration": {"type": "integer", "description": "Segundos de grabacion (default 10)", "default": 10}
+            }
+        }
+    },
+    {
+        "name": "get_ambient_level",
+        "description": "Mide el nivel de ruido ambiental actual (silencioso, moderado, ruidoso).",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
     }
 ]
 
@@ -116,6 +147,14 @@ def execute_tool(name: str, inputs: dict) -> str:
             return get_note(inputs["key"])
         elif name == "list_notes":
             return list_notes()
+        elif name == "send_telegram":
+            telegram_send(inputs["message"])
+            return "Mensaje enviado al celular via Telegram."
+        elif name == "listen_environment":
+            return transcribe_ambient(inputs.get("duration", 10))
+        elif name == "get_ambient_level":
+            result = get_ambient_level()
+            return f"Nivel de ruido: {result['level']} ({result['db']} dB)"
         else:
             return f"Herramienta desconocida: {name}"
     except Exception as e:
