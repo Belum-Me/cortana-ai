@@ -49,6 +49,24 @@ def _handle_tool_calls(response, messages: list[dict]) -> str:
     return ""
 
 
+def chat_fast(user_input: str) -> str:
+    """Version rapida para voz: sin analisis previo, respuesta directa."""
+    save_message("user", user_input)
+    history = get_recent_history()
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        system=get_system_prompt(),
+        tools=TOOL_DEFINITIONS,
+        messages=history,
+    )
+
+    reply = _handle_tool_calls(response, list(history))
+    save_message("assistant", reply)
+    return reply
+
+
 def chat(user_input: str) -> str:
     save_message("user", user_input)
     history = get_recent_history()

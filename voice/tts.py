@@ -1,80 +1,65 @@
+"""
+TTS para Cortana usando edge-tts + sounddevice (compatible Windows Python 3.14)
+"""
+
 import asyncio
-import edge_tts
 import tempfile
 import os
 import threading
+import numpy as np
+import edge_tts
+import sounddevice as sd
+import librosa
 
-# Voz seleccionada: española, femenina, neural, firme y clara
-# es-ES-ElviraNeural: timbre femenino preciso, autoridad natural, claridad impecable
 VOICE = "es-ES-ElviraNeural"
-
-# Configuracion de personalidad vocal de Cortana:
-# Rate ligeramente reducido para pausas naturales y ritmo reflexivo
-# Pitch levemente bajo para autoridad intelectual sin perder feminidad
 RATE = "-8%"
 PITCH = "-4Hz"
-VOLUME = "+0%"
 
 
-async def _synthesize(text: str, output_path: str):
-    """Sintetiza texto a audio con la voz de Cortana."""
-    communicate = edge_tts.Communicate(
-        text=text,
-        voice=VOICE,
-        rate=RATE,
-        pitch=PITCH,
-        volume=VOLUME,
-    )
-    await communicate.save(output_path)
+async def _synthesize(text: str, path: str):
+    communicate = edge_tts.Communicate(text=text, voice=VOICE, rate=RATE, pitch=PITCH)
+    await communicate.save(path)
 
 
-def _clean_text_for_speech(text: str) -> str:
-    """Limpia markdown y simbolos para una lectura natural."""
+def _clean(text: str) -> str:
     import re
-    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)   # bold
-    text = re.sub(r"\*(.*?)\*", r"\1", text)         # italic
-    text = re.sub(r"`(.*?)`", r"\1", text)           # code inline
-    text = re.sub(r"#{1,6}\s", "", text)             # headers
-    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)  # links
-    text = re.sub(r"[-*]\s", "", text)               # bullets
-    text = re.sub(r"\n{2,}", ". ", text)             # parrafos
-    text = re.sub(r"\n", " ", text)
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.*?)\*", r"\1", text)
+    text = re.sub(r"`(.*?)`", r"\1", text)
+    text = re.sub(r"#{1,6}\s", "", text)
+    text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
+    text = re.sub(r"[-*]\s", "", text)
+    text = re.sub(r"\n+", ". ", text)
     return text.strip()
 
 
 def speak(text: str, blocking: bool = True):
-    """Convierte texto a voz y lo reproduce."""
-    try:
-        from playsound import playsound
-    except ImportError:
-        print(f"[VOZ] {text}")
-        return
-
-    clean = _clean_text_for_speech(text)
+    clean = _clean(text)
     if not clean:
         return
 
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-        tmp_path = f.name
+        tmp = f.name
 
     try:
-        asyncio.run(_synthesize(clean, tmp_path))
-
+        asyncio.run(_synthesize(clean, tmp))
+        audio, sr = librosa.load(tmp, sr=22050, mono=True)
         if blocking:
-            playsound(tmp_path)
+            sd.play(audio, sr)
+            sd.wait()
         else:
-            t = threading.Thread(target=playsound, args=(tmp_path,), daemon=True)
-            t.start()
+            def _play():
+                sd.play(audio, sr)
+                sd.wait()
+            threading.Thread(target=_play, daemon=True).start()
     except Exception as e:
-        print(f"[TTS Error] {e}")
-        print(f"Cortana: {text}")
+        print(f"[TTS] {e}")
     finally:
         try:
-            os.unlink(tmp_path)
+            os.unlink(tmp)
         except Exception:
             pass
 
 
 def speak_async(text: str):
-    """Reproduce voz sin bloquear el hilo principal."""
     speak(text, blocking=False)
