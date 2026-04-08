@@ -6,8 +6,8 @@ Ejecutar: python app.py
 import threading
 import customtkinter as ctk
 from core.memory import init_db
-from core.llm import chat_fast
-from voice.tts import speak_async
+from core.llm import chat_fast_stream, pick_filler
+from voice.tts import speak_async, speak_blocking
 from listener import VoiceListener
 
 ctk.set_appearance_mode("dark")
@@ -122,22 +122,39 @@ class CortanaApp(ctk.CTk):
         if not text or self._busy:
             return
         self.input_box.delete("1.0", "end")
-        threading.Thread(target=self._respond, args=(text,), daemon=True).start()
+        threading.Thread(target=self._respond, args=(text, "es"), daemon=True).start()
 
-    def _respond(self, text: str):
+    def _respond(self, text: str, lang: str = "es"):
         self._busy = True
         self._listener.set_speaking(True)
         self.after(0, lambda: self._add(text, is_user=True))
         self.after(0, lambda: self._status("● Pensando...", COLORS["accent"]))
         self.after(0, lambda: self._banner("⏳ Procesando...", COLORS["yellow"]))
+
+        # Frase de transición inmediata mientras la API procesa
+        speak_blocking(pick_filler(lang))
+
+        full_reply_parts: list[str] = []
+
+        def _on_chunk(chunk: str):
+            """Llamado por el stream para cada oración lista."""
+            full_reply_parts.append(chunk)
+            # Mostrar en UI al recibir el primer chunk
+            if len(full_reply_parts) == 1:
+                self.after(0, lambda: self._status("● Hablando...", COLORS["green"]))
+            speak_blocking(chunk)
+
         try:
-            reply = chat_fast(text)
+            chat_fast_stream(text, lang=lang, on_chunk=_on_chunk)
         except Exception as e:
-            reply = f"Error: {e}"
-        self.after(0, lambda: self._add(reply, is_user=False))
+            err = f"Error: {e}"
+            full_reply_parts.append(err)
+            speak_blocking(err)
+
+        full_reply = " ".join(full_reply_parts)
+        self.after(0, lambda: self._add(full_reply, is_user=False))
         self.after(0, lambda: self._status("● Escuchando...", COLORS["yellow"]))
         self.after(0, lambda: self._banner("🎙 Di  \"Cortana\"  para hablar", COLORS["green"]))
-        speak_async(reply)
         self._busy = False
         self._listener.set_speaking(False)
 
@@ -145,7 +162,7 @@ class CortanaApp(ctk.CTk):
         self._add("Sistema activo. Di «Cortana» para hablar.", is_user=False)
         self._status("● Cargando modelos...", COLORS["yellow"])
         self._listener.start()
-        speak_async("Sistema activo. Cargando modelos de voz.")
+        speak_async("Sistema activo.")
 
     def _on_speech(self, text: str, lang: str):
         """Llamado por VoiceListener cuando se transcribe habla."""
@@ -161,7 +178,7 @@ class CortanaApp(ctk.CTk):
         print(f"[activado/{lang}] {text}")
         self.after(0, lambda: self._banner("🔴 Escuchando...", COLORS["red"]))
         self.after(0, lambda: self._status("● Activada", COLORS["accent"]))
-        threading.Thread(target=self._respond, args=(text,), daemon=True).start()
+        threading.Thread(target=self._respond, args=(text, lang), daemon=True).start()
 
     def _on_close(self):
         self._listener.stop()

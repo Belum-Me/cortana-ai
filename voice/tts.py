@@ -61,5 +61,10 @@ def speak(text: str, blocking: bool = True):
             pass
 
 
+def speak_blocking(text: str):
+    """TTS síncrono. Usado en el pipeline de streaming para encadenar chunks."""
+    speak(text, blocking=True)
+
+
 def speak_async(text: str):
     speak(text, blocking=False)
