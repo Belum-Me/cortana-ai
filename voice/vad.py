@@ -1,17 +1,16 @@
 """
-VAD con grabacion y transcripcion en paralelo.
-Nunca pierde el wake word porque graba sin parar.
+VAD + Wake Word detection 100% local con faster-whisper.
+Sin internet, sin API keys.
 """
 
 import queue
 import threading
 import numpy as np
 import sounddevice as sd
-import speech_recognition as sr
 
 SAMPLE_RATE = 16000
-CHUNK_DURATION = 2.0          # segundos por bloque de deteccion
-OVERLAP = 0.5                 # segundos de solapamiento entre bloques
+CHUNK_DURATION = 2.5
+OVERLAP = 0.5
 CHUNK_SAMPLES = int(SAMPLE_RATE * CHUNK_DURATION)
 OVERLAP_SAMPLES = int(SAMPLE_RATE * OVERLAP)
 
@@ -20,35 +19,11 @@ SILENCE_THRESHOLD = 0.009
 SILENCE_TIMEOUT = 1.4
 MAX_DURATION = 12.0
 
-_recognizer = sr.Recognizer()
-_use_whisper = None   # None = autodetectar en primer uso
 
-
-def _whisper_available() -> bool:
-    global _use_whisper
-    if _use_whisper is None:
-        try:
-            from voice.whisper_stt import _get_model
-            _use_whisper = True
-        except Exception:
-            _use_whisper = False
-    return _use_whisper
-
-
-def transcribe(audio: np.ndarray, language: str = "es-ES") -> str | None:
-    """Transcribe con faster-whisper (local) o Google STT como fallback."""
-    if _whisper_available():
-        try:
-            from voice.whisper_stt import transcribe_audio
-            return transcribe_audio(audio, language="es")
-        except Exception:
-            pass
-    # Fallback: Google STT
-    data = sr.AudioData(audio.tobytes(), SAMPLE_RATE, 2)
-    try:
-        return _recognizer.recognize_google(data, language=language)
-    except Exception:
-        return None
+def transcribe(audio_np: np.ndarray, language: str = "es") -> str | None:
+    """Transcribe con faster-whisper (local). Sin internet."""
+    from voice.whisper_stt import transcribe_audio
+    return transcribe_audio(audio_np, language=language, model_size="base")
 
 
 def record_speech(timeout: float = 6.0) -> np.ndarray | None:
@@ -97,8 +72,8 @@ def record_speech(timeout: float = 6.0) -> np.ndarray | None:
 
 class ContinuousListener:
     """
-    Graba y transcribe en paralelo sin tiempo muerto.
-    Llama on_wake(texto) cuando detecta el wake word.
+    Graba y detecta wake word en paralelo usando faster-whisper (tiny).
+    100% local, sin internet, sin API keys.
     """
 
     def __init__(self, wake_words: list[str], on_wake):
@@ -106,12 +81,20 @@ class ContinuousListener:
         self.on_wake = on_wake
         self._audio_q = queue.Queue(maxsize=4)
         self._stop = threading.Event()
-        self._active = False   # True cuando está procesando un comando
+        self._active = False
         self._prev_tail = np.zeros(OVERLAP_SAMPLES, dtype="int16")
 
     def start(self):
+        # Precargar modelos en background para evitar retraso al primer uso
+        threading.Thread(target=self._preload, daemon=True).start()
         threading.Thread(target=self._recorder, daemon=True).start()
         threading.Thread(target=self._processor, daemon=True).start()
+
+    def _preload(self):
+        from voice.whisper_stt import preload_models
+        print("[Whisper] Precargando modelos...")
+        preload_models()
+        print("[Whisper] Modelos listos. Di 'Cortana' para hablar.")
 
     def stop(self):
         self._stop.set()
@@ -120,25 +103,21 @@ class ContinuousListener:
         self._active = v
 
     def _recorder(self):
-        """Graba bloques continuos y los mete en la cola."""
         with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
                             dtype="int16", blocksize=CHUNK_SAMPLES) as stream:
             while not self._stop.is_set():
                 data, _ = stream.read(CHUNK_SAMPLES)
                 chunk = data.flatten()
-
-                # Solapar con el final del bloque anterior
                 combined = np.concatenate([self._prev_tail, chunk])
                 self._prev_tail = chunk[-OVERLAP_SAMPLES:]
-
                 if not self._active:
                     try:
                         self._audio_q.put_nowait(combined)
                     except queue.Full:
-                        pass  # descartar si cola llena
+                        pass
 
     def _processor(self):
-        """Transcribe bloques y detecta wake word."""
+        from voice.whisper_stt import contains_wake_word
         while not self._stop.is_set():
             try:
                 audio = self._audio_q.get(timeout=1.0)
@@ -148,12 +127,15 @@ class ContinuousListener:
             if self._active:
                 continue
 
-            text = transcribe(audio)
-            if not text:
+            # Verificar nivel de energía antes de transcribir
+            audio_f = audio.astype(np.float32) / 32768.0
+            rms = np.sqrt(np.mean(audio_f ** 2))
+            if rms < 0.005:
                 continue
 
-            print(f"[oído] {text}")
-
-            if any(w in text.lower() for w in self.wake_words):
+            detected, text = contains_wake_word(audio_f, self.wake_words)
+            if text:
+                print(f"[oído] {text}")
+            if detected:
                 self._active = True
                 self.on_wake(text)

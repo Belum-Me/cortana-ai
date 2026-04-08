@@ -13,7 +13,6 @@ from core.memory import init_db
 from core.llm import chat_fast
 from voice.tts import speak_async
 from voice.vad import record_speech, transcribe, ContinuousListener
-from voice.porcupine_ww import is_configured as porcupine_configured
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -59,7 +58,6 @@ class CortanaApp(ctk.CTk):
         self.configure(fg_color=COLORS["bg"])
         self._stop = threading.Event()
         self._busy = False
-        self._porcupine = None
         self._listener = ContinuousListener(WAKE_WORDS, self._on_wake)
         self._build_ui()
         init_db()
@@ -145,41 +143,12 @@ class CortanaApp(ctk.CTk):
         speak_async(reply)
         self._busy = False
         self._listener.set_active(False)
-        if self._porcupine:
-            self._porcupine.set_active(False)
 
     def _startup(self):
-        if porcupine_configured():
-            from voice.porcupine_ww import PorcupineListener, WAKE_WORD
-            import os
-            ww = os.getenv("PORCUPINE_KEYWORD", "jarvis")
-            self._add(f"Sistema activo. Di «{ww}» para hablar. (Porcupine activo)", is_user=False)
-            self._porcupine = PorcupineListener(on_wake=self._on_wake_porcupine)
-            self._porcupine.start()
-        else:
-            self._add("Sistema activo. Di «Cortana» para hablar.", is_user=False)
-            self._listener.start()
-
-        self._status("● Escuchando...", COLORS["yellow"])
-        speak_async("Sistema activo. Estoy escuchando.")
-
-    def _on_wake_porcupine(self):
-        """Callback de Porcupine: ya detectó la wake word, grabar comando."""
-        print("[Porcupine] Wake word — grabando comando...")
-        self.after(0, lambda: self._banner("🔴 Escuchando tu pregunta...", COLORS["red"]))
-        self.after(0, lambda: self._status("● Activada", COLORS["accent"]))
-
-        cmd_audio = record_speech(timeout=5.0)
-        cmd_text = transcribe(cmd_audio) if cmd_audio is not None else None
-        print(f"[Whisper] {cmd_text}")
-
-        if cmd_text:
-            threading.Thread(target=self._respond, args=(cmd_text,), daemon=True).start()
-        else:
-            self.after(0, lambda: self._banner("🎙 Di la wake word para hablar", COLORS["green"]))
-            self.after(0, lambda: self._status("● Escuchando...", COLORS["yellow"]))
-            if self._porcupine:
-                self._porcupine.set_active(False)
+        self._add("Sistema activo. Di «Cortana» para hablar.", is_user=False)
+        self._status("● Cargando modelos...", COLORS["yellow"])
+        self._listener.start()
+        speak_async("Sistema activo. Cargando modelos de voz.")
 
     def _on_wake(self, wake_text: str):
         """Llamado cuando se detecta el wake word."""
@@ -197,8 +166,6 @@ class CortanaApp(ctk.CTk):
 
     def _on_close(self):
         self._listener.stop()
-        if self._porcupine:
-            self._porcupine.stop()
         self._stop.set()
         self.destroy()
 
