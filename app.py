@@ -4,15 +4,11 @@ Ejecutar: python app.py
 """
 
 import threading
-import time
-import numpy as np
-import sounddevice as sd
-import speech_recognition as sr
 import customtkinter as ctk
 from core.memory import init_db
 from core.llm import chat_fast
 from voice.tts import speak_async
-from voice.vad import record_speech, transcribe, ContinuousListener
+from listener import VoiceListener
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -32,7 +28,6 @@ COLORS = {
 }
 
 WAKE_WORDS = ["cortana", "oye cortana", "hey cortana"]
-SAMPLE_RATE = 16000
 
 
 
@@ -58,7 +53,8 @@ class CortanaApp(ctk.CTk):
         self.configure(fg_color=COLORS["bg"])
         self._stop = threading.Event()
         self._busy = False
-        self._listener = ContinuousListener(WAKE_WORDS, self._on_wake)
+        self._listener = VoiceListener()
+        self._listener.on_speech(self._on_speech)
         self._build_ui()
         init_db()
         self.after(500, self._startup)
@@ -130,6 +126,7 @@ class CortanaApp(ctk.CTk):
 
     def _respond(self, text: str):
         self._busy = True
+        self._listener.set_speaking(True)
         self.after(0, lambda: self._add(text, is_user=True))
         self.after(0, lambda: self._status("● Pensando...", COLORS["accent"]))
         self.after(0, lambda: self._banner("⏳ Procesando...", COLORS["yellow"]))
@@ -142,7 +139,7 @@ class CortanaApp(ctk.CTk):
         self.after(0, lambda: self._banner("🎙 Di  \"Cortana\"  para hablar", COLORS["green"]))
         speak_async(reply)
         self._busy = False
-        self._listener.set_active(False)
+        self._listener.set_speaking(False)
 
     def _startup(self):
         self._add("Sistema activo. Di «Cortana» para hablar.", is_user=False)
@@ -150,23 +147,24 @@ class CortanaApp(ctk.CTk):
         self._listener.start()
         speak_async("Sistema activo. Cargando modelos de voz.")
 
-    def _on_wake(self, wake_text: str):
-        """Llamado cuando se detecta el wake word."""
-        print(f"[wake] {wake_text}")
-        self.after(0, lambda: self._banner("🔴 Escuchando tu pregunta...", COLORS["red"]))
+    def _on_speech(self, text: str, lang: str):
+        """Llamado por VoiceListener cuando se transcribe habla."""
+        if self._busy:
+            return
+
+        text_lower = text.lower()
+        has_wake = any(w in text_lower for w in WAKE_WORDS)
+        if not has_wake:
+            print(f"[ignorado/{lang}] {text}")
+            return
+
+        print(f"[activado/{lang}] {text}")
+        self.after(0, lambda: self._banner("🔴 Escuchando...", COLORS["red"]))
         self.after(0, lambda: self._status("● Activada", COLORS["accent"]))
-
-        # Grabar comando con VAD
-        cmd_audio = record_speech(timeout=5.0)
-        cmd_text = transcribe(cmd_audio) if cmd_audio is not None else None
-        print(f"[cmd] {cmd_text}")
-
-        full = f"{wake_text}. {cmd_text}" if cmd_text else wake_text
-        threading.Thread(target=self._respond, args=(full,), daemon=True).start()
+        threading.Thread(target=self._respond, args=(text,), daemon=True).start()
 
     def _on_close(self):
         self._listener.stop()
-        self._stop.set()
         self.destroy()
 
 
