@@ -12,7 +12,7 @@ import customtkinter as ctk
 from core.memory import init_db
 from core.llm import chat_fast
 from voice.tts import speak_async
-from voice.vad import record_speech, listen_for_wake_word
+from voice.vad import record_speech, transcribe, ContinuousListener
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -33,20 +33,8 @@ COLORS = {
 
 WAKE_WORDS = ["cortana", "oye cortana", "hey cortana"]
 SAMPLE_RATE = 16000
-RECOGNIZER = sr.Recognizer()
 
 
-def record(seconds: float) -> np.ndarray:
-    return sd.rec(int(seconds * SAMPLE_RATE), samplerate=SAMPLE_RATE,
-                  channels=1, dtype="int16", blocking=True).flatten()
-
-
-def transcribe(audio: np.ndarray) -> str | None:
-    data = sr.AudioData(audio.tobytes(), SAMPLE_RATE, 2)
-    try:
-        return RECOGNIZER.recognize_google(data, language="es-ES")
-    except (sr.UnknownValueError, sr.RequestError):
-        return None
 
 
 class Bubble(ctk.CTkFrame):
@@ -70,6 +58,7 @@ class CortanaApp(ctk.CTk):
         self.configure(fg_color=COLORS["bg"])
         self._stop = threading.Event()
         self._busy = False
+        self._listener = ContinuousListener(WAKE_WORDS, self._on_wake)
         self._build_ui()
         init_db()
         self.after(500, self._startup)
@@ -153,48 +142,30 @@ class CortanaApp(ctk.CTk):
         self.after(0, lambda: self._banner("🎙 Di  \"Cortana\"  para hablar", COLORS["green"]))
         speak_async(reply)
         self._busy = False
+        self._listener.set_active(False)
 
     def _startup(self):
         self._add("Sistema activo. Di «Cortana» para hablar.", is_user=False)
         self._status("● Escuchando...", COLORS["yellow"])
         speak_async("Sistema activo. Estoy escuchando.")
-        threading.Thread(target=self._listen_loop, daemon=True).start()
+        self._listener.start()
 
-    def _listen_loop(self):
-        while not self._stop.is_set():
-            if self._busy:
-                time.sleep(0.2)
-                continue
-            try:
-                # Detectar wake word en fragmento de 2.5s
-                detected, wake_text = listen_for_wake_word(WAKE_WORDS, RECOGNIZER)
-                if not detected:
-                    if wake_text:
-                        print(f"[oído] {wake_text}")
-                    continue
+    def _on_wake(self, wake_text: str):
+        """Llamado cuando se detecta el wake word."""
+        print(f"[wake] {wake_text}")
+        self.after(0, lambda: self._banner("🔴 Escuchando tu pregunta...", COLORS["red"]))
+        self.after(0, lambda: self._status("● Activada", COLORS["accent"]))
 
-                print(f"[wake] {wake_text}")
-                self.after(0, lambda: self._banner("🔴 Escuchando...", COLORS["red"]))
-                self.after(0, lambda: self._status("● Activada", COLORS["accent"]))
+        # Grabar comando con VAD
+        cmd_audio = record_speech(timeout=5.0)
+        cmd_text = transcribe(cmd_audio) if cmd_audio is not None else None
+        print(f"[cmd] {cmd_text}")
 
-                # Grabar comando con VAD (espera que el usuario hable y pare)
-                cmd_audio = record_speech(timeout=6.0)
-                if cmd_audio is None:
-                    # No hubo comando — el wake word fue el mensaje
-                    threading.Thread(target=self._respond, args=(wake_text,), daemon=True).start()
-                    continue
-
-                cmd_text = transcribe(cmd_audio)
-                print(f"[cmd] {cmd_text}")
-
-                full = f"{wake_text}. {cmd_text}" if cmd_text else wake_text
-                threading.Thread(target=self._respond, args=(full,), daemon=True).start()
-
-            except Exception as e:
-                print(f"[error] {e}")
-                time.sleep(1)
+        full = f"{wake_text}. {cmd_text}" if cmd_text else wake_text
+        threading.Thread(target=self._respond, args=(full,), daemon=True).start()
 
     def _on_close(self):
+        self._listener.stop()
         self._stop.set()
         self.destroy()
 
