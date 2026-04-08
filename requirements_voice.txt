@@ -1,0 +1,35 @@
+# ============================================================
+# Cortana Voice Module - Requirements (Windows, Python 3.14)
+# Generado: 2026-04-08
+# ============================================================
+
+# --- STT local (offline, multilenguaje) ---
+faster-whisper==1.2.1          # Whisper optimizado con CTranslate2
+
+# --- Audio capture y reproduccion ---
+sounddevice==0.5.5             # Captura y reproduccion sin pyaudio (RECOMENDADO Python 3.14)
+numpy==2.4.4                   # Arrays de audio
+scipy==1.17.1                  # Procesamiento de señal
+
+# --- Wake word detection ---
+pvporcupine==4.0.2             # Wake word local (requiere API key de picovoice.ai)
+# ALTERNATIVA GRATUITA: usar faster-whisper para deteccion de wake word (ver voice/vad.py)
+
+# --- Procesamiento de audio ---
+librosa==0.11.0                # Extraccion de features MFCC (speaker profile)
+SpeechRecognition==3.16.0      # Transcripcion via Google STT (fallback online)
+
+# --- TTS ---
+edge-tts==7.2.8                # Voz neural de Microsoft (ElviraNeural, es-ES)
+
+# --- INCOMPATIBLES con Python 3.14 en Windows (no instalar) ---
+# pyaudio          -> requiere compilar PortAudio, sin wheel para Python 3.14
+#                    REEMPLAZADO por: sounddevice
+# webrtcvad        -> sin wheel para Python 3.14
+# webrtcvad-wheels -> sin wheel para Python 3.14
+#                    REEMPLAZADO por: VAD por energia RMS (voice/vad.py)
+
+# --- Instalacion ---
+# pip install faster-whisper==1.2.1 sounddevice==0.5.5 pvporcupine==4.0.2
+# pip install numpy==2.4.4 scipy==1.17.1 librosa==0.11.0
+# pip install SpeechRecognition==3.16.0 edge-tts==7.2.8
