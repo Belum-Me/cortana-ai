@@ -21,9 +21,29 @@ SILENCE_TIMEOUT = 1.4
 MAX_DURATION = 12.0
 
 _recognizer = sr.Recognizer()
+_use_whisper = None   # None = autodetectar en primer uso
+
+
+def _whisper_available() -> bool:
+    global _use_whisper
+    if _use_whisper is None:
+        try:
+            from voice.whisper_stt import _get_model
+            _use_whisper = True
+        except Exception:
+            _use_whisper = False
+    return _use_whisper
 
 
 def transcribe(audio: np.ndarray, language: str = "es-ES") -> str | None:
+    """Transcribe con faster-whisper (local) o Google STT como fallback."""
+    if _whisper_available():
+        try:
+            from voice.whisper_stt import transcribe_audio
+            return transcribe_audio(audio, language="es")
+        except Exception:
+            pass
+    # Fallback: Google STT
     data = sr.AudioData(audio.tobytes(), SAMPLE_RATE, 2)
     try:
         return _recognizer.recognize_google(data, language=language)
