@@ -5,10 +5,12 @@ Ejecutar: python app.py
 
 import threading
 import customtkinter as ctk
+import sounddevice as sd
 from core.memory import init_db
 from core.llm import chat_fast_stream, pick_filler
 from voice.tts import speak_async, speak_blocking
 from listener import VoiceListener
+from voice_loop import _is_stop_cmd
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -52,6 +54,7 @@ class CortanaApp(ctk.CTk):
         self.minsize(500, 600)
         self.configure(fg_color=COLORS["bg"])
         self._stop = threading.Event()
+        self._interrupt = threading.Event()
         self._busy = False
         self._listener = VoiceListener()
         self._listener.on_speech(self._on_speech)
@@ -126,37 +129,49 @@ class CortanaApp(ctk.CTk):
 
     def _respond(self, text: str, lang: str = "es"):
         self._busy = True
+        self._interrupt.clear()
         self._listener.set_speaking(True)
         self.after(0, lambda: self._add(text, is_user=True))
         self.after(0, lambda: self._status("● Pensando...", COLORS["accent"]))
         self.after(0, lambda: self._banner("⏳ Procesando...", COLORS["yellow"]))
 
         # Frase de transición inmediata mientras la API procesa
-        speak_blocking(pick_filler(lang))
+        self._say(pick_filler(lang))
 
         full_reply_parts: list[str] = []
 
         def _on_chunk(chunk: str):
-            """Llamado por el stream para cada oración lista."""
+            if self._interrupt.is_set():
+                return
             full_reply_parts.append(chunk)
-            # Mostrar en UI al recibir el primer chunk
             if len(full_reply_parts) == 1:
                 self.after(0, lambda: self._status("● Hablando...", COLORS["green"]))
-            speak_blocking(chunk)
+            self._say(chunk)
 
         try:
             chat_fast_stream(text, lang=lang, on_chunk=_on_chunk)
         except Exception as e:
             err = f"Error: {e}"
             full_reply_parts.append(err)
-            speak_blocking(err)
+            self._say(err)
 
-        full_reply = " ".join(full_reply_parts)
-        self.after(0, lambda: self._add(full_reply, is_user=False))
+        if full_reply_parts and not self._interrupt.is_set():
+            full_reply = " ".join(full_reply_parts)
+            self.after(0, lambda: self._add(full_reply, is_user=False))
+
         self.after(0, lambda: self._status("● Escuchando...", COLORS["yellow"]))
         self.after(0, lambda: self._banner("🎙 Di  \"Cortana\"  para hablar", COLORS["green"]))
         self._busy = False
         self._listener.set_speaking(False)
+
+    def _say(self, text: str) -> None:
+        """TTS respetando señal de interrupción."""
+        if not text or self._interrupt.is_set():
+            return
+        try:
+            speak_blocking(text)
+        except Exception as e:
+            print(f"[app TTS] {e}")
 
     def _startup(self):
         self._add("Sistema activo. Di «Cortana» para hablar.", is_user=False)
@@ -166,7 +181,32 @@ class CortanaApp(ctk.CTk):
 
     def _on_speech(self, text: str, lang: str):
         """Llamado por VoiceListener cuando se transcribe habla."""
+        # Comando de parada — interrumpe TTS aunque Cortana esté hablando
+        if _is_stop_cmd(text):
+            print(f"[app] Parada: '{text}'")
+            self._interrupt.set()
+            sd.stop()
+            self.after(0, lambda: self._status("● Escuchando...", COLORS["yellow"]))
+            self.after(0, lambda: self._banner("🎙 Di  \"Cortana\"  para hablar", COLORS["green"]))
+            return
+
+        # Interrupción: el usuario habla mientras Cortana responde
         if self._busy:
+            text_lower = text.lower()
+            has_wake = any(w in text_lower for w in WAKE_WORDS)
+            if has_wake:
+                print(f"[app] Interrupción con wake word")
+                self._interrupt.set()
+                sd.stop()
+                # Esperar a que _respond libere self._busy antes de relanzar
+                def _relaunch():
+                    import time
+                    for _ in range(20):
+                        if not self._busy:
+                            break
+                        time.sleep(0.1)
+                    threading.Thread(target=self._respond, args=(text, lang), daemon=True).start()
+                threading.Thread(target=_relaunch, daemon=True).start()
             return
 
         text_lower = text.lower()
