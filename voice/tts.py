@@ -1,5 +1,12 @@
 """
-TTS para Cortana usando edge-tts + sounddevice (compatible Windows Python 3.14)
+TTS para Cortana.
+
+Backends (en orden de prioridad):
+1. F5-TTS  — voice cloning con muestras de Cortana (speak_blocking / speak_async)
+2. edge-tts — voz neural de Microsoft (fallback cuando F5-TTS no está listo)
+
+Para usar el backend de clonación directamente:
+    from voice.tts_clone import speak_clone, speak_clone_async
 """
 
 import asyncio
@@ -12,8 +19,11 @@ import sounddevice as sd
 import librosa
 
 VOICE = "es-ES-ElviraNeural"
-RATE = "-8%"
+RATE  = "-8%"
 PITCH = "-4Hz"
+
+# Activar clonación de voz. False = siempre usa edge-tts (más rápido, menos fiel)
+USE_VOICE_CLONE = True
 
 
 async def _synthesize(text: str, path: str):
@@ -62,9 +72,29 @@ def speak(text: str, blocking: bool = True):
 
 
 def speak_blocking(text: str):
-    """TTS síncrono. Usado en el pipeline de streaming para encadenar chunks."""
+    """
+    TTS síncrono. Usa F5-TTS (voz clonada) si USE_VOICE_CLONE=True,
+    si no, edge-tts.
+    """
+    if USE_VOICE_CLONE:
+        try:
+            from voice.tts_clone import speak_clone
+            speak_clone(text, blocking=True)
+            return
+        except Exception as e:
+            print(f"[TTS] F5-TTS falló, usando edge-tts: {e}")
     speak(text, blocking=True)
 
 
 def speak_async(text: str):
+    """
+    TTS asíncrono. Usa F5-TTS si USE_VOICE_CLONE=True, si no, edge-tts.
+    """
+    if USE_VOICE_CLONE:
+        try:
+            from voice.tts_clone import speak_clone_async
+            speak_clone_async(text)
+            return
+        except Exception as e:
+            print(f"[TTS] F5-TTS falló, usando edge-tts: {e}")
     speak(text, blocking=False)
