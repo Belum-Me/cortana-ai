@@ -21,5 +21,20 @@ MODELO DE OBEDIENCIA:
 """
 
 
+VOICE_PROMPT = SYSTEM_PROMPT + """
+
+MODO VOZ — REGLAS ADICIONALES:
+- Responde en máximo 2-3 oraciones cortas. Nada de listas, nada de markdown.
+- Habla como en una conversación normal, no como un informe.
+- Si la respuesta es compleja, da un resumen oral y ofrece profundizar después.
+- Nunca uses asteriscos, guiones, ni símbolos. Solo texto limpio.
+- Usa conectores naturales: "Mira,", "Lo que pasa es que...", "En resumen,", "Básicamente..."
+"""
+
+
 def get_system_prompt() -> str:
     return SYSTEM_PROMPT
+
+
+def get_voice_prompt() -> str:
+    return VOICE_PROMPT

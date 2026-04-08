@@ -1,6 +1,6 @@
 import anthropic
 from config import ANTHROPIC_API_KEY, MODEL, MAX_TOKENS
-from core.identity import get_system_prompt
+from core.identity import get_system_prompt, get_voice_prompt
 from core.memory import get_recent_history, save_message, log_override
 from core.decision import analyze_intent
 from verification.fact_check import verify_claim
@@ -50,14 +50,14 @@ def _handle_tool_calls(response, messages: list[dict]) -> str:
 
 
 def chat_fast(user_input: str) -> str:
-    """Version rapida para voz: sin analisis previo, respuesta directa."""
+    """Version rapida para voz: respuestas cortas y conversacionales."""
     save_message("user", user_input)
     history = get_recent_history()
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=MAX_TOKENS,
-        system=get_system_prompt(),
+        max_tokens=512,
+        system=get_voice_prompt(),
         tools=TOOL_DEFINITIONS,
         messages=history,
     )

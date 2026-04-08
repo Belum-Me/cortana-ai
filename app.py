@@ -12,6 +12,7 @@ import customtkinter as ctk
 from core.memory import init_db
 from core.llm import chat_fast
 from voice.tts import speak_async
+from voice.vad import record_speech, listen_for_wake_word
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -165,28 +166,29 @@ class CortanaApp(ctk.CTk):
                 time.sleep(0.2)
                 continue
             try:
-                # Graba 3 segundos y detecta wake word
-                audio = record(3.0)
-                text = transcribe(audio)
-                if not text:
+                # Detectar wake word en fragmento de 2.5s
+                detected, wake_text = listen_for_wake_word(WAKE_WORDS, RECOGNIZER)
+                if not detected:
+                    if wake_text:
+                        print(f"[oído] {wake_text}")
                     continue
 
-                print(f"[oído] {text}")
+                print(f"[wake] {wake_text}")
+                self.after(0, lambda: self._banner("🔴 Escuchando...", COLORS["red"]))
+                self.after(0, lambda: self._status("● Activada", COLORS["accent"]))
 
-                if any(w in text.lower() for w in WAKE_WORDS):
-                    self.after(0, lambda: self._banner("🔴 Escuchando tu pregunta...", COLORS["red"]))
-                    self.after(0, lambda: self._status("● Activada", COLORS["accent"]))
+                # Grabar comando con VAD (espera que el usuario hable y pare)
+                cmd_audio = record_speech(timeout=6.0)
+                if cmd_audio is None:
+                    # No hubo comando — el wake word fue el mensaje
+                    threading.Thread(target=self._respond, args=(wake_text,), daemon=True).start()
+                    continue
 
-                    # Graba el comando (5 seg)
-                    cmd_audio = record(5.0)
-                    cmd = transcribe(cmd_audio)
+                cmd_text = transcribe(cmd_audio)
+                print(f"[cmd] {cmd_text}")
 
-                    if cmd:
-                        full = f"{text}. {cmd}"
-                    else:
-                        full = text
-
-                    threading.Thread(target=self._respond, args=(full,), daemon=True).start()
+                full = f"{wake_text}. {cmd_text}" if cmd_text else wake_text
+                threading.Thread(target=self._respond, args=(full,), daemon=True).start()
 
             except Exception as e:
                 print(f"[error] {e}")
