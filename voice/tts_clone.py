@@ -177,7 +177,11 @@ def speak_clone(text: str, blocking: bool = True) -> bool:
 
 
 def speak_clone_async(text: str) -> None:
-    speak_clone(text, blocking=False)
+    """Síntesis Y reproducción en hilo separado (no bloquea nada)."""
+    threading.Thread(
+        target=lambda: speak_clone(text, blocking=True),
+        daemon=True,
+    ).start()
 
 
 def set_reference(index: int) -> None:

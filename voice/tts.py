@@ -22,8 +22,10 @@ VOICE = "es-ES-ElviraNeural"
 RATE  = "-8%"
 PITCH = "-4Hz"
 
-# Activar clonación de voz. False = siempre usa edge-tts (más rápido, menos fiel)
-USE_VOICE_CLONE = True
+# F5-TTS es demasiado lento en CPU (~43s/frase) para tiempo real.
+# Los fillers en voz de Cortana se manejan desde voice/tts_filler.py (cache WAV).
+# speak_blocking y speak_async usan siempre edge-tts para el streaming en vivo.
+USE_VOICE_CLONE = False
 
 
 async def _synthesize(text: str, path: str):
