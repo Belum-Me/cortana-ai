@@ -184,15 +184,22 @@ class CortanaApp(ctk.CTk):
     def _on_speech(self, text: str, lang: str):
         # Mostrar siempre lo que escuchó (feedback visual)
         preview = text[:60] + "..." if len(text) > 60 else text
-        self.after(0, lambda: self.heard_lbl.configure(
-            text=f"Escuche: \"{preview}\""))
+        try:
+            self.after(0, lambda: self.heard_lbl.configure(
+                text=f"Escuche: \"{preview}\""))
+        except RuntimeError:
+            return  # ventana ya cerrada
+
+        def _ui(fn):
+            try: self.after(0, fn)
+            except RuntimeError: pass
 
         # Comando de parada
         if _is_stop_cmd(text):
             print(f"[app] Parada: '{text}'")
             self._tts.stop()
-            self.after(0, lambda: self._status("Escuchando...", COLORS["green"]))
-            self.after(0, lambda: self._banner("Di  \"Cortana\"  para hablar", COLORS["green"]))
+            _ui(lambda: self._status("Escuchando...", COLORS["green"]))
+            _ui(lambda: self._banner("Di  \"Cortana\"  para hablar", COLORS["green"]))
             return
 
         # Interrupcion mientras responde
@@ -220,8 +227,8 @@ class CortanaApp(ctk.CTk):
             return
 
         print(f"[activado/{lang}] {text}")
-        self.after(0, lambda: self._banner("Escuchando...", COLORS["red"]))
-        self.after(0, lambda: self._status("Activada", COLORS["accent"]))
+        _ui(lambda: self._banner("Escuchando...", COLORS["red"]))
+        _ui(lambda: self._status("Activada", COLORS["accent"]))
         threading.Thread(target=self._respond, args=(text, lang), daemon=True).start()
 
     # ── Startup / cierre ─────────────────────────────────────────────────────

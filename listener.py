@@ -94,21 +94,30 @@ def _transcribe(audio: np.ndarray) -> SpeechResult | None:
     model = _get_model("base")
     audio_f = audio.astype(np.float32) / 32768.0
 
-    segments, info = model.transcribe(
-        audio_f,
-        beam_size=3,
-        language=None,           # autodetección
-        task="transcribe",
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 300},
-    )
+    def _run(language):
+        segs, inf = model.transcribe(
+            audio_f,
+            beam_size=3,
+            language=language,
+            task="transcribe",
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 300},
+        )
+        parts = [s.text.strip() for s in segs if s.text.strip()]
+        return " ".join(parts), inf.language
 
-    parts = [seg.text.strip() for seg in segments if seg.text.strip()]
-    if not parts:
+    # Primera pasada: autodetección
+    text, detected = _run(None)
+
+    # Si detectó idioma que no es español ni inglés, retranscribir forzando español
+    if detected not in ("es", "en"):
+        print(f"[Listener] Idioma '{detected}' no soportado, reintentando en español...")
+        text, detected = _run("es")
+
+    if not text:
         return None
 
-    text = " ".join(parts)
-    lang = info.language if info.language in ("es", "en") else "es"
+    lang = detected if detected in ("es", "en") else "es"
     duration = len(audio_f) / SAMPLE_RATE
 
     return SpeechResult(text=text, language=lang, duration_s=duration)
