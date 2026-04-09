@@ -2,20 +2,14 @@
 cortana/voice_loop.py
 
 Pipeline de voz completo:
-  VoiceListener  →  LLM streaming  →  TTS  →  Speaker
+  VoiceListener  ->  LLM streaming  ->  CortanaTTS  ->  Speaker
 
-Características:
-  - Interrupciones: si el usuario habla mientras Cortana responde, detiene el
-    TTS inmediatamente (sd.stop) y procesa la nueva entrada.
-  - Contexto persistente: core.memory guarda cada turno; el LLM siempre tiene
-    historial.
-  - Log de turnos en conversacion.log (timestamp + idioma).
-  - Errores silenciosos: ningún error crashea el loop.
-  - Comandos de parada: "para" / "stop" / "cállate" silencian a Cortana.
-
-TTS disponibles (ver _TTS_BACKEND al fondo del archivo):
-  - EdgeTTS   → edge-tts + sounddevice  (principal, español natural)
-  - Pyttsx3TTS → pyttsx3 + SAPI5        (placeholder, solo voces instaladas)
+- Interrupciones: si el usuario habla, sd.stop() inmediato + nuevo turno
+- Contexto persistente (core.memory)
+- Log de turnos en conversacion.log (timestamp + idioma)
+- Errores silenciosos: nunca crashea el loop
+- Comandos "para" / "stop" / "callate" silencian a Cortana
+- set_speaking sincronizado con CortanaTTS.is_speaking
 """
 
 import queue
@@ -24,16 +18,13 @@ import time
 import logging
 from pathlib import Path
 
-import sounddevice as sd
-
 from listener import VoiceListener
-from core.llm import chat_fast_stream
-from voice.tts_filler import play_filler
+from core.llm import chat_fast_stream, pick_filler
+from tts_engine import CortanaTTS
 
-# ── Logging de conversación ───────────────────────────────────────────────────
+# ── Log de conversacion ───────────────────────────────────────────────────────
 
 _LOG_PATH = Path(__file__).parent / "conversacion.log"
-
 _conv_log = logging.getLogger("conversacion")
 _conv_log.setLevel(logging.INFO)
 _conv_log.propagate = False
@@ -51,79 +42,12 @@ def _log(role: str, text: str, lang: str) -> None:
 
 # ── Comandos de parada ────────────────────────────────────────────────────────
 
-_STOP_WORDS = {"para", "stop", "cállate", "callate", "silencio", "quiet"}
+_STOP_WORDS = {"para", "stop", "callate", "silencio", "quiet", "calla"}
 
 
 def _is_stop_cmd(text: str) -> bool:
     words = set(text.lower().split())
     return bool(words & _STOP_WORDS)
-
-
-# ── Backends de TTS ───────────────────────────────────────────────────────────
-
-class EdgeTTS:
-    """
-    TTS principal: edge-tts + sounddevice.
-    sd.stop() interrumpe la reproducción desde cualquier hilo.
-    """
-
-    def say(self, text: str) -> None:
-        from voice.tts import speak_blocking
-        speak_blocking(text)
-
-    def interrupt(self) -> None:
-        sd.stop()
-
-
-class Pyttsx3TTS:
-    """
-    TTS placeholder: pyttsx3 / SAPI5.
-    Nota: en Windows, pyttsx3 debe correr en un único hilo COM.
-    La interrupción es chunk-level (espera que el chunk actual termine).
-    Para voces en español instala un paquete de voz SAPI5 en Windows.
-    """
-
-    def __init__(self):
-        self._q: queue.Queue = queue.Queue()
-        self._done = threading.Event()
-        threading.Thread(target=self._worker, daemon=True, name="pyttsx3").start()
-
-    def _worker(self):
-        import pyttsx3
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 155)
-        engine.setProperty("volume", 1.0)
-
-        while True:
-            text = self._q.get()
-            if text is None:
-                break
-            try:
-                engine.say(text)
-                engine.runAndWait()
-            except Exception as e:
-                print(f"[Pyttsx3TTS] {e}")
-                try:
-                    engine = pyttsx3.init()
-                    engine.setProperty("rate", 155)
-                except Exception:
-                    pass
-            finally:
-                self._done.set()
-
-    def say(self, text: str) -> None:
-        self._done.clear()
-        self._q.put(text)
-        self._done.wait()
-
-    def interrupt(self) -> None:
-        # SAPI5 no soporta stop() seguro desde otro hilo;
-        # la interrupción ocurre al terminar el chunk actual.
-        pass
-
-
-# Cambia aquí para alternar entre backends:
-_TTS_BACKEND = EdgeTTS
 
 
 # ── VoiceLoop ─────────────────────────────────────────────────────────────────
@@ -135,27 +59,24 @@ class VoiceLoop:
     Uso standalone:
         loop = VoiceLoop()
         loop.start()
-        loop.wait()       # bloquea hasta Ctrl+C
+        loop.wait()
 
-    Integración con la app:
+    Integracion con la app GUI:
         loop = VoiceLoop()
         loop.start()
-        # más tarde:
-        loop.stop()
+        loop.stop()   # al cerrar
     """
 
-    def __init__(self, tts_cls=None):
-        self._tts = (tts_cls or _TTS_BACKEND)()
+    def __init__(self):
+        self._tts      = CortanaTTS()
         self._listener = VoiceListener()
         self._listener.on_speech(self._on_speech)
 
-        # Cola con capacidad 1: solo importa el turno más reciente
+        # Cola maxsize=1: solo el turno mas reciente importa
         self._speech_q: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
-        self._interrupt = threading.Event()
-        self._speaking = threading.Event()
-        self._running = False
+        self._running  = False
 
-    # ── Interfaz pública ──────────────────────────────────────────────────────
+    # ── Interfaz publica ──────────────────────────────────────────────────────
 
     def start(self) -> None:
         self._running = True
@@ -169,13 +90,11 @@ class VoiceLoop:
 
     def stop(self) -> None:
         self._running = False
-        self._interrupt.set()
-        self._tts.interrupt()
+        self._tts.stop()
         self._listener.stop()
         print("[VoiceLoop] Detenido.")
 
     def wait(self) -> None:
-        """Bloquea el hilo principal; sale con Ctrl+C."""
         try:
             while self._running:
                 time.sleep(0.2)
@@ -185,20 +104,18 @@ class VoiceLoop:
     # ── Callback del listener ─────────────────────────────────────────────────
 
     def _on_speech(self, text: str, lang: str) -> None:
-        """Llamado por VoiceListener cada vez que se transcribe habla."""
-
+        # Comando de parada
         if _is_stop_cmd(text):
             print(f"[VoiceLoop] Parada: '{text}'")
-            self._interrupt.set()
-            self._tts.interrupt()
+            self._tts.stop()
             self._listener.set_speaking(False)
             return
 
-        if self._speaking.is_set():
-            print("[VoiceLoop] Interrupción — nueva entrada recibida")
-            self._interrupt.set()
-            self._tts.interrupt()
-            # Descartar turno anterior de la cola
+        # Interrupcion mientras Cortana habla
+        if self._tts.is_speaking:
+            print("[VoiceLoop] Interrupcion detectada")
+            self._tts.stop()
+            # Vaciar turno anterior
             while not self._speech_q.empty():
                 try:
                     self._speech_q.get_nowait()
@@ -208,71 +125,58 @@ class VoiceLoop:
         try:
             self._speech_q.put_nowait((text, lang))
         except queue.Full:
-            pass  # Silencioso: cola ocupada
+            pass
 
     # ── Pipeline ──────────────────────────────────────────────────────────────
 
     def _pipeline_loop(self) -> None:
-        """Hilo dedicado: procesa un turno a la vez en orden."""
         while self._running:
             try:
                 text, lang = self._speech_q.get(timeout=0.5)
             except queue.Empty:
                 continue
 
-            self._interrupt.clear()
-            self._speaking.set()
+            # Sincronizar: microfono silenciado mientras Cortana habla
             self._listener.set_speaking(True)
+            self._tts.resume()       # limpiar stop_event de interrupcion anterior
 
             try:
                 self._run_turn(text, lang)
             except Exception as e:
                 print(f"[VoiceLoop] Error en turno: {e}")
             finally:
-                self._speaking.clear()
                 self._listener.set_speaking(False)
 
     def _run_turn(self, text: str, lang: str) -> None:
-        """Ejecuta un turno completo: filler → stream LLM → TTS chunk a chunk."""
         _log("user", text, lang)
         print(f"[{lang.upper()}] Usuario: {text}")
 
-        # Frase inmediata: voz de Cortana si está pre-generada, edge-tts si no
-        try:
-            play_filler(lang, blocking=True)
-        except Exception as e:
-            print(f"[VoiceLoop] filler: {e}")
-        if self._interrupt.is_set():
+        # Frase de transicion — desde cache (voz Cortana) o edge-tts
+        filler = pick_filler(lang)
+        self._tts.speak(filler, lang=lang, blocking=True)
+
+        if self._tts._stop_event.is_set():
             return
 
         reply_parts: list[str] = []
 
         def on_chunk(chunk: str) -> None:
-            if self._interrupt.is_set():
+            if self._tts._stop_event.is_set():
                 return
             reply_parts.append(chunk)
-            self._say(chunk)
+            self._tts.speak(chunk, lang=lang, blocking=True)
 
         try:
             chat_fast_stream(text, lang=lang, on_chunk=on_chunk)
         except Exception as e:
             print(f"[VoiceLoop] Error LLM: {e}")
-            if not self._interrupt.is_set():
-                self._say("Hubo un error, intenta de nuevo.")
+            if not self._tts._stop_event.is_set():
+                self._tts.speak("Hubo un error, intenta de nuevo.", lang=lang)
 
-        if reply_parts and not self._interrupt.is_set():
+        if reply_parts and not self._tts._stop_event.is_set():
             full = " ".join(reply_parts)
             _log("cortana", full, lang)
             print(f"[{lang.upper()}] Cortana: {full}")
-
-    def _say(self, text: str) -> None:
-        """Reproduce texto por TTS respetando la señal de interrupción."""
-        if not text or self._interrupt.is_set():
-            return
-        try:
-            self._tts.say(text)
-        except Exception as e:
-            print(f"[VoiceLoop] Error TTS: {e}")
 
 
 # ── Punto de entrada standalone ───────────────────────────────────────────────
