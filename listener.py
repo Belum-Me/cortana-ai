@@ -25,10 +25,11 @@ SAMPLE_RATE      = 16000
 FRAME_MS         = 30                              # ms por frame de análisis
 FRAME_SAMPLES    = int(SAMPLE_RATE * FRAME_MS / 1000)  # 480 muestras
 
-# VAD — umbrales (equivalentes a webrtcvad aggressiveness=2)
-RMS_SPEECH       = 0.018     # RMS mínimo para considerar habla
-ZCR_SPEECH       = 0.15      # Zero Crossing Rate mínimo (evita ruido DC)
-ENERGY_FLOOR     = 0.003     # por debajo = silencio absoluto
+# VAD — umbrales
+# Si el micrófono es silencioso, bajar RMS_SPEECH a 0.008 o menos
+RMS_SPEECH       = 0.010     # RMS mínimo para considerar habla (bajado de 0.018)
+ZCR_SPEECH       = 0.08      # Zero Crossing Rate mínimo (bajado de 0.15)
+ENERGY_FLOOR     = 0.001     # por debajo = silencio absoluto (bajado de 0.003)
 
 # Timings
 SILENCE_TIMEOUT  = 1.2       # segundos de silencio para cerrar turno
@@ -239,7 +240,9 @@ class VoiceListener:
                 self._silence_n = 0
                 with self._state_lock:
                     self._state = State.PROCESSING
-                print(f"[Listener] PROCESSING ({len(audio)/SAMPLE_RATE:.1f}s)")
+                dur = len(audio) / SAMPLE_RATE
+                rms_total = float(np.sqrt(np.mean(audio.astype(np.float32)**2))) / 32768.0
+                print(f"[Listener] PROCESSING {dur:.1f}s  rms={rms_total:.4f}")
                 self._work_q.put(audio)
 
     # ── Worker de transcripción ────────────────────────────────────────────────
@@ -258,7 +261,7 @@ class VoiceListener:
                 self._state = State.IDLE
 
             if result and result.text:
-                print(f"[Listener] [{result.language}] {result.text}")
+                print(f"[Listener] [{result.language}] \"{result.text}\"")
                 if self._callback:
                     threading.Thread(
                         target=self._callback,
@@ -266,4 +269,4 @@ class VoiceListener:
                         daemon=True,
                     ).start()
             else:
-                print("[Listener] IDLE (sin habla detectada)")
+                print("[Listener] IDLE (Whisper no detecto habla)")
