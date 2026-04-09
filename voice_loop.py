@@ -27,7 +27,8 @@ from pathlib import Path
 import sounddevice as sd
 
 from listener import VoiceListener
-from core.llm import chat_fast_stream, pick_filler
+from core.llm import chat_fast_stream
+from voice.tts_filler import play_filler
 
 # ── Logging de conversación ───────────────────────────────────────────────────
 
@@ -236,8 +237,11 @@ class VoiceLoop:
         _log("user", text, lang)
         print(f"[{lang.upper()}] Usuario: {text}")
 
-        # Frase inmediata mientras la API procesa (~100ms de latencia percibida)
-        self._say(pick_filler(lang))
+        # Frase inmediata: voz de Cortana si está pre-generada, edge-tts si no
+        try:
+            play_filler(lang, blocking=True)
+        except Exception as e:
+            print(f"[VoiceLoop] filler: {e}")
         if self._interrupt.is_set():
             return
 

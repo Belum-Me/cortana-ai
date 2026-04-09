@@ -7,8 +7,9 @@ import threading
 import customtkinter as ctk
 import sounddevice as sd
 from core.memory import init_db
-from core.llm import chat_fast_stream, pick_filler
+from core.llm import chat_fast_stream
 from voice.tts import speak_async, speak_blocking
+from voice.tts_filler import play_filler
 from listener import VoiceListener
 from voice_loop import _is_stop_cmd
 
@@ -136,7 +137,8 @@ class CortanaApp(ctk.CTk):
         self.after(0, lambda: self._banner("⏳ Procesando...", COLORS["yellow"]))
 
         # Frase de transición inmediata mientras la API procesa
-        self._say(pick_filler(lang))
+        # (voz de Cortana si está pre-generada, edge-tts si no)
+        play_filler(lang, blocking=True)
 
         full_reply_parts: list[str] = []
 
