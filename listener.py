@@ -158,10 +158,14 @@ class VoiceListener:
                 self._state = State.IDLE
                 print("[Listener] IDLE — micrófono activo")
 
-    def start(self) -> None:
-        """Inicia el listener en hilos separados."""
+    def start(self, on_ready=None) -> None:
+        """Inicia el listener en hilos separados. on_ready() se llama cuando Whisper está listo."""
         from voice.whisper_stt import preload_models
-        threading.Thread(target=preload_models, daemon=True).start()
+        threading.Thread(
+            target=preload_models,
+            kwargs={"on_ready": on_ready},
+            daemon=True,
+        ).start()
         threading.Thread(target=self._audio_loop, daemon=True, name="audio-loop").start()
         threading.Thread(target=self._worker_loop, daemon=True, name="transcription-worker").start()
         print("[Listener] Iniciado. Di 'Cortana' en cualquier momento.")

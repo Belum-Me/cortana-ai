@@ -4,6 +4,7 @@ STT local con faster-whisper. Sin internet, sin API key.
 - Modelo 'base': para transcripción de comandos (preciso, ~800ms)
 """
 
+import threading
 import numpy as np
 import sounddevice as sd
 from faster_whisper import WhisperModel
@@ -11,21 +12,30 @@ from faster_whisper import WhisperModel
 SAMPLE_RATE = 16000
 
 _models = {}
+_model_lock = threading.Lock()
 
 
 def _get_model(size: str = "base") -> WhisperModel:
     if size not in _models:
-        sizes = {"tiny": "75MB", "base": "150MB", "small": "500MB"}
-        print(f"[Whisper] Cargando modelo '{size}'... (primera vez descarga ~{sizes.get(size, '?')})")
-        _models[size] = WhisperModel(size, device="cpu", compute_type="int8")
-        print(f"[Whisper] Modelo '{size}' listo.")
+        with _model_lock:
+            # Doble-check dentro del lock
+            if size not in _models:
+                sizes = {"tiny": "75MB", "base": "150MB", "small": "500MB"}
+                print(f"[Whisper] Cargando modelo '{size}'... (~{sizes.get(size, '?')})")
+                _models[size] = WhisperModel(size, device="cpu", compute_type="int8")
+                print(f"[Whisper] Modelo '{size}' listo.")
     return _models[size]
 
 
-def preload_models():
-    """Carga ambos modelos al inicio para evitar retrasos después."""
+def preload_models(on_ready=None):
+    """Carga ambos modelos. Llama on_ready() cuando ambos están listos."""
     _get_model("tiny")
     _get_model("base")
+    if on_ready:
+        try:
+            on_ready()
+        except Exception as e:
+            print(f"[Whisper] on_ready error: {e}")
 
 
 def transcribe_audio(audio_np: np.ndarray, language: str = "es",

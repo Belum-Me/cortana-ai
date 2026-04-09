@@ -86,6 +86,15 @@ class CortanaApp(ctk.CTk):
                                    corner_radius=0, height=36)
         self.banner.pack(fill="x")
 
+        # Label de lo que escuchó (debug / feedback visual)
+        self.heard_lbl = ctk.CTkLabel(self,
+                                      text="",
+                                      font=ctk.CTkFont(size=11),
+                                      fg_color=COLORS["bg"],
+                                      text_color=COLORS["subtext"],
+                                      corner_radius=0, height=20)
+        self.heard_lbl.pack(fill="x")
+
         self.scroll = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"],
                                               scrollbar_button_color=COLORS["border"])
         self.scroll.pack(fill="both", expand=True, padx=8, pady=8)
@@ -173,11 +182,16 @@ class CortanaApp(ctk.CTk):
     # ── Voz entrante ─────────────────────────────────────────────────────────
 
     def _on_speech(self, text: str, lang: str):
+        # Mostrar siempre lo que escuchó (feedback visual)
+        preview = text[:60] + "..." if len(text) > 60 else text
+        self.after(0, lambda: self.heard_lbl.configure(
+            text=f"Escuche: \"{preview}\""))
+
         # Comando de parada
         if _is_stop_cmd(text):
             print(f"[app] Parada: '{text}'")
             self._tts.stop()
-            self.after(0, lambda: self._status("Escuchando...", COLORS["yellow"]))
+            self.after(0, lambda: self._status("Escuchando...", COLORS["green"]))
             self.after(0, lambda: self._banner("Di  \"Cortana\"  para hablar", COLORS["green"]))
             return
 
@@ -215,7 +229,13 @@ class CortanaApp(ctk.CTk):
     def _startup(self):
         self._add("Sistema activo. Di Cortana para hablar.", is_user=False)
         self._status("Cargando modelos...", COLORS["yellow"])
-        self._listener.start()
+
+        def _on_ready():
+            self.after(0, lambda: self._status("Escuchando...", COLORS["green"]))
+            self.after(0, lambda: self._banner("Di  \"Cortana\"  para hablar", COLORS["green"]))
+            print("[App] Modelos listos. Escuchando.")
+
+        self._listener.start(on_ready=_on_ready)
         self._tts.speak("Sistema activo.", lang="es", blocking=False)
 
     def _on_close(self):
